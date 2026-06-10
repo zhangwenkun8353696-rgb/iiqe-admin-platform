@@ -2,6 +2,7 @@ import csv
 import io
 import json
 import os
+import random
 import re
 import sqlite3
 import uuid
@@ -16,6 +17,9 @@ BASE_DIR = Path(__file__).resolve().parent
 DB_PATH = BASE_DIR / "data.db"
 UPLOAD_DIR = BASE_DIR / "uploads"
 UPLOAD_DIR.mkdir(exist_ok=True)
+
+# 知识点问答对所在目录（与生成脚本一致）
+IIQE_BASE = Path(os.getenv("IIQE_BASE", r"C:\Users\zhangwenkun12"))
 
 PAPER_CHOICES = ["P1", "P2", "P3", "P5", "P6"]
 PAPER_NAMES = {
@@ -545,3 +549,261 @@ def bootstrap_existing_bank() -> None:
     set_meta("bootstrap_done", "1")
     set_meta("bootstrap_count", str(inserted))
     set_meta("bootstrap_sources", ",".join(p.name for p in existing))
+
+
+# ---------------------------------------------------------------------------
+# 知识点 → 题库生成（真实考试风格），与 generate_3000_questions.py 同口径
+# ---------------------------------------------------------------------------
+
+GEN_PAPER_NAMES = {
+    "P1": "保险原理及实务",
+    "P2": "一般保险",
+    "P3": "长期保险",
+    "P5": "投资相连长期保险",
+    "P6": "旅游保险代理人",
+}
+
+DIRECT_TEMPLATES = [
+    "{q}",
+    "{q}",
+    "{q}（请选出最正确的答案）",
+]
+TOPIC_TEMPLATES = [
+    "下列关于「{topic}」的描述，何者正确？",
+    "就「{topic}」而言，以下哪一项说法正确？",
+    "有关「{topic}」，下列何者的陈述最为恰当？",
+    "关于「{topic}」，下列哪一项的理解是正确的？",
+]
+SCENARIO_TEMPLATES = [
+    "保险中介人在向客户解释「{topic}」时，下列哪一项说法正确？",
+    "在处理相关保险事务时，就「{topic}」的正确理解应为下列何者？",
+    "客户就「{topic}」提出查询，作为中介人应给出下列哪一项正确说明？",
+]
+LETTERS = ["A", "B", "C", "D"]
+
+
+def _norm(text: str) -> str:
+    return re.sub(r"\s+", "", (text or "")).strip()
+
+
+def _chapter_key(chapter: str) -> str:
+    if not chapter:
+        return ""
+    m = re.search(r"\d+", str(chapter))
+    return m.group(0) if m else str(chapter).strip()[:2]
+
+
+def load_qa_pairs() -> list[dict[str, Any]]:
+    """按优先级载入知识点问答对：分卷扩展 > 合并扩展 > 种子。"""
+    parts = sorted(IIQE_BASE.glob("iiqe_qa_pairs_expanded_P*.jsonl"))
+    merged = IIQE_BASE / "iiqe_qa_pairs_expanded.jsonl"
+    seed = IIQE_BASE / "iiqe_qa_pairs_seed.jsonl"
+    if parts:
+        files = parts
+    elif merged.exists():
+        files = [merged]
+    else:
+        files = [seed]
+
+    items: list[dict[str, Any]] = []
+    for fp in files:
+        if not fp.exists():
+            continue
+        for line in fp.read_text(encoding="utf-8").splitlines():
+            line = line.strip()
+            if not line:
+                continue
+            try:
+                obj = json.loads(line)
+            except Exception:
+                continue
+            if obj.get("answer") and obj.get("paper"):
+                obj["_ckey"] = _chapter_key(obj.get("chapter", ""))
+                items.append(obj)
+    return items
+
+
+def _pick_distractors(qa, pool_same_paper, all_items, rng):
+    correct_n = _norm(qa["answer"])
+    kp = qa.get("knowledge_point")
+    ckey = qa.get("_ckey", "")
+
+    def collect(seq):
+        out = []
+        for x in seq:
+            txt = x["answer"].strip()
+            if _norm(txt) != correct_n and x.get("knowledge_point") != kp:
+                out.append(txt)
+        return out
+
+    near = collect(x for x in pool_same_paper if x.get("_ckey", "") == ckey and ckey)
+    same_paper = collect(pool_same_paper)
+    glob = collect(all_items)
+
+    seen, ordered = set(), []
+    for bucket in (near, same_paper, glob):
+        rng.shuffle(bucket)
+        for c in bucket:
+            n = _norm(c)
+            if n and n not in seen:
+                seen.add(n)
+                ordered.append(c)
+    if len(ordered) < 3:
+        return None
+    return ordered[:8]
+
+
+def _build_stem(qa, rng):
+    topic = qa.get("knowledge_point", "").strip() or "相关考点"
+    q = (qa.get("question", "") or "").strip()
+    r = rng.random()
+    if q and r < 0.45:
+        tpl = rng.choice(DIRECT_TEMPLATES)
+    elif r < 0.8:
+        tpl = rng.choice(TOPIC_TEMPLATES)
+    else:
+        tpl = rng.choice(SCENARIO_TEMPLATES)
+    return tpl.format(topic=topic, q=q)
+
+
+def _make_question(qid, qa, pool_same_paper, all_items, rng):
+    kp = qa.get("knowledge_point", "核心考点")
+    paper = qa["paper"]
+    paper_name = GEN_PAPER_NAMES.get(paper, paper)
+    correct = qa["answer"].strip()
+
+    pool = _pick_distractors(qa, pool_same_paper, all_items, rng)
+    if not pool or len(pool) < 3:
+        return None
+    distractors = rng.sample(pool, 3)
+    options_texts = distractors + [correct]
+    rng.shuffle(options_texts)
+    answer_letter = LETTERS[options_texts.index(correct)]
+    options = {LETTERS[i]: options_texts[i] for i in range(4)}
+
+    locator = qa.get("source_locator", "")
+    explanation = (
+        f"正确答案：{correct}"
+        f"（{paper_name}，知识点「{kp}」"
+        f"{'，' + locator if locator else ''}）。"
+        f"其余选项为相关主题下的不同概念或表述有误，故不适用。"
+    )
+    return {
+        "question_id": qid,
+        "paper": paper,
+        "stem": _build_stem(qa, rng),
+        "options": options,
+        "answer": answer_letter,
+        "explanation": explanation,
+        "source_locator": locator,
+    }
+
+
+def generate_questions(target_total: int = 3000, seed: int | None = None) -> list[dict[str, Any]]:
+    """从知识点问答对生成贴近考试风格的单选题（各卷均衡）。"""
+    rng = random.Random(seed if seed is not None else 20260610)
+    qa_items = load_qa_pairs()
+    if not qa_items:
+        return []
+
+    pools: dict[str, list] = {}
+    for it in qa_items:
+        pools.setdefault(it["paper"], []).append(it)
+
+    papers = sorted(pools.keys())
+    per_paper = max(1, target_total // len(papers))
+
+    results, dedup, counter = [], set(), 1
+    for paper in papers:
+        paper_qa = pools[paper]
+        produced, attempts = 0, 0
+        max_attempts = per_paper * 60
+        while produced < per_paper and attempts < max_attempts:
+            attempts += 1
+            qa = rng.choice(paper_qa)
+            qid = f"GEN-{paper}-{counter:05d}"
+            q = _make_question(qid, qa, paper_qa, qa_items, rng)
+            if not q:
+                continue
+            key = _norm(q["stem"]) + "||" + _norm(q["options"][q["answer"]])
+            if key in dedup:
+                continue
+            dedup.add(key)
+            results.append(q)
+            produced += 1
+            counter += 1
+    return results
+
+
+def generate_and_store(target_total: int = 3000, seed: int | None = None) -> dict[str, Any]:
+    """生成题目并写入数据库；同时落地一份 JSONL 备份到 IIQE_BASE。"""
+    rows = generate_questions(target_total, seed=seed)
+    if not rows:
+        raise ValueError(
+            "未找到知识点问答对，无法生成。请确认 "
+            f"{IIQE_BASE} 下存在 iiqe_qa_pairs_expanded_P*.jsonl 或 seed 文件。"
+        )
+
+    inserted, mismatches = 0, 0
+    for row in rows:
+        if insert_question(row, source_type="ai_generated", source_file="knowledge-derived"):
+            inserted += 1
+            merged = (row.get("stem") or "") + " " + json.dumps(row.get("options"), ensure_ascii=False)
+            _, mismatch, _ = validate_paper(merged, str(row.get("paper") or "").upper())
+            mismatches += 1 if mismatch else 0
+
+    try:
+        out = IIQE_BASE / "iiqe_question_bank_3000.jsonl"
+        with out.open("w", encoding="utf-8", newline="\n") as f:
+            for r in rows:
+                f.write(json.dumps(r, ensure_ascii=False) + "\n")
+        backup = str(out)
+    except Exception:
+        backup = ""
+
+    by_paper: dict[str, int] = {}
+    for r in rows:
+        by_paper[r["paper"]] = by_paper.get(r["paper"], 0) + 1
+
+    _log_upload(
+        filename="knowledge-derived",
+        upload_type="generate",
+        declared_paper="",
+        inserted_count=inserted,
+        mismatch_count=mismatches,
+        generation_mode="knowledge-derived",
+        note=f"target={target_total}; produced={len(rows)}; backup={backup}",
+    )
+    return {
+        "produced": len(rows),
+        "inserted": inserted,
+        "mismatch_count": mismatches,
+        "by_paper": by_paper,
+        "backup": backup,
+    }
+
+
+def sample_questions(n: int = 20, paper: str = "") -> list[dict[str, Any]]:
+    """从题库随机抽样，按试卷格式返回（含简单结构质检）。"""
+    rows = query_questions(paper=paper, limit=1000)
+    if not rows:
+        return []
+    n = min(n, len(rows))
+    picked = random.sample(rows, n)
+    out = []
+    for q in picked:
+        opts = q.get("options") or []
+        texts = [o.get("text", "").strip() for o in opts]
+        issues = []
+        if len(opts) != 4:
+            issues.append(f"选项数={len(opts)}")
+        if len(set(texts)) != len(texts):
+            issues.append("存在重复选项")
+        if q.get("answer") not in [o.get("key") for o in opts]:
+            issues.append("答案不在选项内")
+        if any(not t for t in texts):
+            issues.append("存在空选项")
+        q = dict(q)
+        q["issues"] = issues
+        out.append(q)
+    return out

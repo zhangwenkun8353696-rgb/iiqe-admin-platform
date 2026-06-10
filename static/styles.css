@@ -90,3 +90,37 @@ thead th {
 }
 tr.bad { background: #fef2f2; }
 details summary { cursor: pointer; }
+
+.hint { color: #6b7280; font-size: 13px; margin: 0 0 8px; }
+.muted { color: #6b7280; font-size: 13px; margin: 4px 0; }
+
+.sample-list { display: grid; gap: 12px; }
+.sample-item {
+  border: 1px solid #e5e7eb;
+  border-radius: 10px;
+  padding: 12px 14px;
+  background: #fcfcfd;
+}
+.sample-item.bad { background: #fef2f2; border-color: #fecaca; }
+.sample-head {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  align-items: center;
+  margin: 0 0 6px;
+}
+.sample-head .metric { font-size: 13px; }
+.sample-stem { margin: 6px 0; font-size: 15px; line-height: 1.5; }
+.sample-options { list-style: none; padding-left: 0; margin: 6px 0; }
+.sample-options li {
+  padding: 6px 10px;
+  border: 1px solid #e5e7eb;
+  border-radius: 8px;
+  margin-bottom: 6px;
+  background: #fff;
+}
+.sample-options li.correct {
+  background: #dcfce7;
+  border-color: #86efac;
+  font-weight: bold;
+}

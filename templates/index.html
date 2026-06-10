@@ -2,22 +2,22 @@
 {% block content %}
 <section class="grid stats-grid">
   <article class="card">
-    <h3>Total Questions</h3>
+    <h3>题目总数</h3>
     <p class="metric">{{ stats.total_questions }}</p>
   </article>
   <article class="card">
-    <h3>Mismatch Count</h3>
+    <h3>科目不匹配数</h3>
     <p class="metric danger">{{ stats.mismatch_count }}</p>
   </article>
   <article class="card">
-    <h3>Bootstrap Status</h3>
-    <p class="metric">{{ "Done" if stats.bootstrap_done else "Pending" }}</p>
-    <small>Imported: {{ stats.bootstrap_count }}</small>
+    <h3>初始导入状态</h3>
+    <p class="metric">{{ "已完成" if stats.bootstrap_done else "待处理" }}</p>
+    <small>已导入：{{ stats.bootstrap_count }}</small>
   </article>
 </section>
 
 <section class="card">
-  <h2>Per Paper Stats</h2>
+  <h2>各科目题量</h2>
   <div class="paper-pills">
     {% for p in papers %}
       <span class="pill">{{ p }} · {{ stats.paper_counts.get(p, 0) }}</span>
@@ -27,54 +27,105 @@
 
 <section class="grid forms-grid">
   <article class="card">
-    <h2>Upload Study Material (PDF/TXT)</h2>
+    <h2>上传学习资料（PDF/TXT）</h2>
     <form method="post" action="{{ url_for('upload_material_web') }}" enctype="multipart/form-data">
-      <label>Paper</label>
+      <label>所属科目</label>
       <select name="paper_hint" required>
-        <option value="">Select paper</option>
+        <option value="">请选择科目</option>
         {% for p in papers %}
           <option value="{{ p }}">{{ p }} - {{ paper_names[p] }}</option>
         {% endfor %}
       </select>
-      <label>File</label>
+      <label>文件</label>
       <input type="file" name="material_file" accept=".pdf,.txt" required>
-      <button type="submit">Upload and Generate</button>
+      <button type="submit">上传并生成题目</button>
     </form>
   </article>
 
   <article class="card">
-    <h2>Upload Questions File</h2>
+    <h2>上传题目文件</h2>
     <form method="post" action="{{ url_for('upload_questions_web') }}" enctype="multipart/form-data">
-      <label>Declared Paper (optional, fallback)</label>
+      <label>指定科目（可选，缺省时回退使用）</label>
       <select name="declared_paper">
-        <option value="">Use file value</option>
+        <option value="">使用文件内的科目值</option>
         {% for p in papers %}
           <option value="{{ p }}">{{ p }} - {{ paper_names[p] }}</option>
         {% endfor %}
       </select>
-      <label>File (.jsonl/.json/.csv)</label>
+      <label>文件（.jsonl/.json/.csv）</label>
       <input type="file" name="question_file" accept=".jsonl,.json,.csv" required>
-      <button type="submit">Upload Questions</button>
+      <button type="submit">上传题目</button>
+    </form>
+  </article>
+
+  <article class="card">
+    <h2>从知识点一键生成题库</h2>
+    <p class="hint">读取本机知识点问答对，按真实考试风格生成单选题并直接入库（各科目均衡，自动去重）。</p>
+    <form method="post" action="{{ url_for('generate_web') }}">
+      <label>目标题量</label>
+      <input type="number" name="target_total" min="50" max="6000" value="3000">
+      <label>随机种子（可选，留空则用默认；改动可换一批题）</label>
+      <input type="number" name="seed" placeholder="例如 20260610">
+      <button type="submit">一键生成并入库</button>
     </form>
   </article>
 </section>
 
 <section class="card">
-  <h2>Preview / Search Questions</h2>
+  <h2>抽样预览（按试卷格式验收）</h2>
   <form method="get" action="{{ url_for('index') }}" class="filter-row">
-    <input type="text" name="keyword" value="{{ keyword }}" placeholder="Search stem or explanation">
+    <label>抽样数量</label>
+    <input type="number" name="sample_n" min="1" max="50" value="{{ sample_n or 20 }}">
+    <select name="sample_paper">
+      <option value="">全部科目</option>
+      {% for p in papers %}
+        <option value="{{ p }}" {% if p == sample_paper %}selected{% endif %}>{{ p }} - {{ paper_names[p] }}</option>
+      {% endfor %}
+    </select>
+    <button type="submit">随机抽样</button>
+  </form>
+
+  {% if samples %}
+  <div class="sample-list">
+    {% for q in samples %}
+    <div class="sample-item {{ 'bad' if q.issues else '' }}">
+      <p class="sample-head">
+        <span class="pill">{{ q.declared_paper }} · {{ paper_names.get(q.declared_paper, '') }}</span>
+        <span class="muted">{{ q.external_id }}</span>
+        {% if q.issues %}<span class="metric danger">⚠ {{ q.issues | join('；') }}</span>{% endif %}
+      </p>
+      <p class="sample-stem"><strong>{{ loop.index }}. {{ q.stem }}</strong></p>
+      <ul class="sample-options">
+        {% for option in q.options %}
+        <li class="{{ 'correct' if option.key == q.answer else '' }}">{{ option.key }}. {{ option.text }}</li>
+        {% endfor %}
+      </ul>
+      <p class="muted"><strong>正确答案：</strong>{{ q.answer }}</p>
+      <p class="muted"><strong>解析：</strong>{{ q.explanation }}</p>
+    </div>
+    {% endfor %}
+  </div>
+  {% elif sample_n %}
+  <p class="hint">题库为空或无符合条件的题目，请先生成或导入题目。</p>
+  {% endif %}
+</section>
+
+<section class="card">
+  <h2>题库预览 / 检索</h2>
+  <form method="get" action="{{ url_for('index') }}" class="filter-row">
+    <input type="text" name="keyword" value="{{ keyword }}" placeholder="搜索题干或解析">
     <select name="paper">
-      <option value="">All papers</option>
+      <option value="">全部科目</option>
       {% for p in papers %}
         <option value="{{ p }}" {% if p == selected_paper %}selected{% endif %}>{{ p }}</option>
       {% endfor %}
     </select>
     <select name="mismatch">
-      <option value="0" {% if not mismatch_only %}selected{% endif %}>All</option>
-      <option value="1" {% if mismatch_only %}selected{% endif %}>Mismatch only</option>
+      <option value="0" {% if not mismatch_only %}selected{% endif %}>全部</option>
+      <option value="1" {% if mismatch_only %}selected{% endif %}>仅看科目不匹配</option>
     </select>
     <input type="number" min="1" max="500" name="limit" value="{{ limit }}">
-    <button type="submit">Apply</button>
+    <button type="submit">应用筛选</button>
   </form>
 
   <div class="table-wrap">
@@ -82,12 +133,12 @@
       <thead>
         <tr>
           <th>ID</th>
-          <th>Declared</th>
-          <th>Detected</th>
-          <th>Mismatch</th>
-          <th>Stem</th>
-          <th>Answer</th>
-          <th>Source</th>
+          <th>标注科目</th>
+          <th>识别科目</th>
+          <th>是否不匹配</th>
+          <th>题干</th>
+          <th>答案</th>
+          <th>来源</th>
         </tr>
       </thead>
       <tbody>
@@ -96,7 +147,7 @@
           <td>{{ q.id }}</td>
           <td>{{ q.declared_paper }}</td>
           <td>{{ q.detected_paper }}</td>
-          <td>{{ "YES" if q.mismatch_flag else "NO" }}</td>
+          <td>{{ "是" if q.mismatch_flag else "否" }}</td>
           <td>
             <details>
               <summary>{{ q.stem }}</summary>
@@ -105,8 +156,8 @@
                 <li>{{ option.key }}. {{ option.text }}</li>
                 {% endfor %}
               </ul>
-              <p><strong>Explanation:</strong> {{ q.explanation }}</p>
-              <p><strong>Validation:</strong> {{ q.validation_note }}</p>
+              <p><strong>解析：</strong> {{ q.explanation }}</p>
+              <p><strong>校验说明：</strong> {{ q.validation_note }}</p>
             </details>
           </td>
           <td>{{ q.answer }}</td>
@@ -119,30 +170,32 @@
 </section>
 
 <section class="card">
-  <h2>Recent Uploads</h2>
+  <h2>最近上传记录</h2>
   <div class="table-wrap">
     <table>
       <thead>
         <tr>
-          <th>Time</th>
-          <th>Type</th>
-          <th>Filename</th>
-          <th>Declared</th>
-          <th>Inserted</th>
-          <th>Mismatches</th>
-          <th>Generation</th>
+          <th>时间</th>
+          <th>类型</th>
+          <th>文件名</th>
+          <th>标注科目</th>
+          <th>新增题数</th>
+          <th>不匹配数</th>
+          <th>生成方式</th>
         </tr>
       </thead>
       <tbody>
+        {% set type_labels = {"material": "学习资料", "questions": "题目文件", "generate": "知识点生成"} %}
+        {% set mode_labels = {"llm": "AI 生成", "ai": "AI 生成", "fallback": "本地规则生成", "knowledge-derived": "知识点生成", "": "—"} %}
         {% for row in uploads %}
         <tr>
           <td>{{ row.created_at }}</td>
-          <td>{{ row.upload_type }}</td>
+          <td>{{ type_labels.get(row.upload_type, row.upload_type) }}</td>
           <td>{{ row.filename }}</td>
           <td>{{ row.declared_paper }}</td>
           <td>{{ row.inserted_count }}</td>
           <td>{{ row.mismatch_count }}</td>
-          <td>{{ row.generation_mode }}</td>
+          <td>{{ mode_labels.get(row.generation_mode, row.generation_mode) }}</td>
         </tr>
         {% endfor %}
       </tbody>

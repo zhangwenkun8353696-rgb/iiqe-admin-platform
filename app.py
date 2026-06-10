@@ -7,12 +7,14 @@ from services import (
     PAPER_CHOICES,
     PAPER_NAMES,
     bootstrap_existing_bank,
+    generate_and_store,
     get_recent_uploads,
     get_stats,
     init_db,
     process_material_upload,
     process_questions_upload,
     query_questions,
+    sample_questions,
 )
 
 BASE_DIR = Path(__file__).resolve().parent
@@ -41,6 +43,10 @@ def create_app() -> Flask:
         stats = get_stats()
         uploads = get_recent_uploads(limit=20)
 
+        sample_n = min(int(request.args.get("sample_n", 0) or 0), 50)
+        sample_paper = (request.args.get("sample_paper") or "").upper().strip()
+        samples = sample_questions(n=sample_n, paper=sample_paper) if sample_n else []
+
         return render_template(
             "index.html",
             questions=questions,
@@ -52,6 +58,9 @@ def create_app() -> Flask:
             keyword=keyword,
             mismatch_only=mismatch_only,
             limit=limit,
+            samples=samples,
+            sample_n=sample_n,
+            sample_paper=sample_paper,
         )
 
     @app.post("/upload-material")
@@ -61,7 +70,7 @@ def create_app() -> Flask:
         try:
             result = process_material_upload(material_file, paper_hint)
             flash(
-                f"Uploaded material and added {result['inserted']} generated questions.",
+                f"资料已上传，并生成新增 {result['inserted']} 道题目。",
                 "success",
             )
         except Exception as exc:
@@ -75,7 +84,24 @@ def create_app() -> Flask:
         try:
             result = process_questions_upload(question_file, declared_paper=declared_paper)
             flash(
-                f"Uploaded questions file and inserted {result['inserted']} questions.",
+                f"题目文件已上传，成功导入 {result['inserted']} 道题目。",
+                "success",
+            )
+        except Exception as exc:
+            flash(str(exc), "error")
+        return redirect(url_for("index"))
+
+    @app.post("/generate")
+    def generate_web():
+        try:
+            target = int(request.form.get("target_total", 3000) or 3000)
+            target = max(50, min(target, 6000))
+            seed_raw = (request.form.get("seed") or "").strip()
+            seed = int(seed_raw) if seed_raw.isdigit() else None
+            result = generate_and_store(target_total=target, seed=seed)
+            flash(
+                f"已从知识点生成 {result['produced']} 道题，新增入库 {result['inserted']} 道"
+                f"（疑似科目不符 {result['mismatch_count']} 道）。",
                 "success",
             )
         except Exception as exc:
@@ -85,6 +111,21 @@ def create_app() -> Flask:
     @app.get("/api/stats")
     def api_stats():
         return jsonify(get_stats())
+
+    @app.get("/api/sample")
+    def api_sample():
+        n = min(int(request.args.get("n", 20) or 20), 50)
+        paper = (request.args.get("paper") or "").upper().strip()
+        items = sample_questions(n=n, paper=paper)
+        return jsonify({"count": len(items), "items": items})
+
+    @app.post("/api/generate")
+    def api_generate():
+        target = int(request.form.get("target_total", 3000) or 3000)
+        target = max(50, min(target, 6000))
+        seed_raw = (request.form.get("seed") or "").strip()
+        seed = int(seed_raw) if seed_raw.isdigit() else None
+        return jsonify(generate_and_store(target_total=target, seed=seed)), 201
 
     @app.get("/api/questions")
     def api_questions():
