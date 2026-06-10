@@ -1,0 +1,152 @@
+{% extends "base.html" %}
+{% block content %}
+<section class="grid stats-grid">
+  <article class="card">
+    <h3>Total Questions</h3>
+    <p class="metric">{{ stats.total_questions }}</p>
+  </article>
+  <article class="card">
+    <h3>Mismatch Count</h3>
+    <p class="metric danger">{{ stats.mismatch_count }}</p>
+  </article>
+  <article class="card">
+    <h3>Bootstrap Status</h3>
+    <p class="metric">{{ "Done" if stats.bootstrap_done else "Pending" }}</p>
+    <small>Imported: {{ stats.bootstrap_count }}</small>
+  </article>
+</section>
+
+<section class="card">
+  <h2>Per Paper Stats</h2>
+  <div class="paper-pills">
+    {% for p in papers %}
+      <span class="pill">{{ p }} · {{ stats.paper_counts.get(p, 0) }}</span>
+    {% endfor %}
+  </div>
+</section>
+
+<section class="grid forms-grid">
+  <article class="card">
+    <h2>Upload Study Material (PDF/TXT)</h2>
+    <form method="post" action="{{ url_for('upload_material_web') }}" enctype="multipart/form-data">
+      <label>Paper</label>
+      <select name="paper_hint" required>
+        <option value="">Select paper</option>
+        {% for p in papers %}
+          <option value="{{ p }}">{{ p }} - {{ paper_names[p] }}</option>
+        {% endfor %}
+      </select>
+      <label>File</label>
+      <input type="file" name="material_file" accept=".pdf,.txt" required>
+      <button type="submit">Upload and Generate</button>
+    </form>
+  </article>
+
+  <article class="card">
+    <h2>Upload Questions File</h2>
+    <form method="post" action="{{ url_for('upload_questions_web') }}" enctype="multipart/form-data">
+      <label>Declared Paper (optional, fallback)</label>
+      <select name="declared_paper">
+        <option value="">Use file value</option>
+        {% for p in papers %}
+          <option value="{{ p }}">{{ p }} - {{ paper_names[p] }}</option>
+        {% endfor %}
+      </select>
+      <label>File (.jsonl/.json/.csv)</label>
+      <input type="file" name="question_file" accept=".jsonl,.json,.csv" required>
+      <button type="submit">Upload Questions</button>
+    </form>
+  </article>
+</section>
+
+<section class="card">
+  <h2>Preview / Search Questions</h2>
+  <form method="get" action="{{ url_for('index') }}" class="filter-row">
+    <input type="text" name="keyword" value="{{ keyword }}" placeholder="Search stem or explanation">
+    <select name="paper">
+      <option value="">All papers</option>
+      {% for p in papers %}
+        <option value="{{ p }}" {% if p == selected_paper %}selected{% endif %}>{{ p }}</option>
+      {% endfor %}
+    </select>
+    <select name="mismatch">
+      <option value="0" {% if not mismatch_only %}selected{% endif %}>All</option>
+      <option value="1" {% if mismatch_only %}selected{% endif %}>Mismatch only</option>
+    </select>
+    <input type="number" min="1" max="500" name="limit" value="{{ limit }}">
+    <button type="submit">Apply</button>
+  </form>
+
+  <div class="table-wrap">
+    <table>
+      <thead>
+        <tr>
+          <th>ID</th>
+          <th>Declared</th>
+          <th>Detected</th>
+          <th>Mismatch</th>
+          <th>Stem</th>
+          <th>Answer</th>
+          <th>Source</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for q in questions %}
+        <tr class="{{ 'bad' if q.mismatch_flag else '' }}">
+          <td>{{ q.id }}</td>
+          <td>{{ q.declared_paper }}</td>
+          <td>{{ q.detected_paper }}</td>
+          <td>{{ "YES" if q.mismatch_flag else "NO" }}</td>
+          <td>
+            <details>
+              <summary>{{ q.stem }}</summary>
+              <ul>
+                {% for option in q.options %}
+                <li>{{ option.key }}. {{ option.text }}</li>
+                {% endfor %}
+              </ul>
+              <p><strong>Explanation:</strong> {{ q.explanation }}</p>
+              <p><strong>Validation:</strong> {{ q.validation_note }}</p>
+            </details>
+          </td>
+          <td>{{ q.answer }}</td>
+          <td>{{ q.source_type }} / {{ q.source_file }}</td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</section>
+
+<section class="card">
+  <h2>Recent Uploads</h2>
+  <div class="table-wrap">
+    <table>
+      <thead>
+        <tr>
+          <th>Time</th>
+          <th>Type</th>
+          <th>Filename</th>
+          <th>Declared</th>
+          <th>Inserted</th>
+          <th>Mismatches</th>
+          <th>Generation</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for row in uploads %}
+        <tr>
+          <td>{{ row.created_at }}</td>
+          <td>{{ row.upload_type }}</td>
+          <td>{{ row.filename }}</td>
+          <td>{{ row.declared_paper }}</td>
+          <td>{{ row.inserted_count }}</td>
+          <td>{{ row.mismatch_count }}</td>
+          <td>{{ row.generation_mode }}</td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</section>
+{% endblock %}
