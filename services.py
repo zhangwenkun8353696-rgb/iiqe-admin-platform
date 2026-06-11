@@ -18,24 +18,51 @@ DB_PATH = BASE_DIR / "data.db"
 UPLOAD_DIR = BASE_DIR / "uploads"
 UPLOAD_DIR.mkdir(exist_ok=True)
 
-# 知识点问答对所在目录（与生成脚本一致）
-IIQE_BASE = Path(os.getenv("IIQE_BASE", r"C:\Users\zhangwenkun12"))
+# 知识点问答对 / 题库文件所在目录。
+# 默认指向本工程根目录（admin-platform 的上级目录），数据文件与平台同放一个工程文件夹，便于迁移管理。
+IIQE_BASE = Path(os.getenv("IIQE_BASE", str(BASE_DIR.parent)))
 
 PAPER_CHOICES = ["P1", "P2", "P3", "P5", "P6"]
+# 显示用中文类别，取自官方 PDF 文件名括号部分。
 PAPER_NAMES = {
-    "P1": "Insurance Principles and Practice",
-    "P2": "General Insurance",
-    "P3": "Long-Term Insurance",
-    "P5": "Investment-Linked Long-Term Insurance",
-    "P6": "Travel Insurance Agent",
+    "P1": "保险原理及实务考试",
+    "P2": "一般保险考试",
+    "P3": "长期保险考试",
+    "P5": "投资相连长期保险考试",
+    "P6": "旅游保险代理人考试",
 }
 
+# 各卷「专属高区分度」关键词（繁简双形）。
+# 注意：P1《保险原理及实务》是通论卷，刻意只放真正属于 P1 独有的监管/原理术语，
+# 避免使用「风险/人寿/旅游」等会出现在其它各卷的泛用词，降低误判。
 PAPER_HINTS = {
-    "P1": ["风险", "保险原理", "操守", "管控", "classification", "principle"],
-    "P2": ["火险", "责任险", "general insurance", "赔偿", "近因", "索偿"],
-    "P3": ["人寿", "可保权益", "冷静期", "medical", "life insurance", "长期"],
-    "P5": ["投连", "衍生工具", "CAPM", "P/E", "期货", "期权"],
-    "P6": ["旅游", "代理人", "转介", "披露", "旅保", "travel insurance"],
+    "P1": [
+        "保监局", "保監局", "保险业监管局", "保險業監管局", "操守守则", "操守守則",
+        "受规管活动", "受規管活動", "偿付准备金", "償付準備金", "管控要员", "管控要員",
+        "最高诚信", "最高誠信", "可保权益", "可保權益", "代位", "彌偿", "弥偿",
+        "近因", "分担", "分擔", "principle", "regulation", "ethics",
+    ],
+    "P2": [
+        "汽车保险", "汽車保險", "火险", "火險", "第三者", "责任保险", "責任保險",
+        "雇员补偿", "僱員補償", "工伤", "工傷", "货运", "貨運", "海事", "海運",
+        "财产保险", "財產保險", "盗窃", "盜竊", "综合汽车", "綜合汽車",
+        "general insurance", "motor", "liability",
+    ],
+    "P3": [
+        "人寿", "人壽", "危疾", "年金", "冷静期", "冷靜期", "自杀条款", "自殺條款",
+        "不可异议", "不可異議", "现金价值", "現金價值", "红利", "紅利", "保单贷款",
+        "保單貸款", "复效", "復效", "医疗保险", "醫療保險", "life insurance", "annuity",
+    ],
+    "P5": [
+        "投资相连", "投資相連", "投连", "投連", "单位", "單位", "基金", "衍生工具",
+        "衍生", "认购", "認購", "赎回", "贖回", "标准差", "標準差", "资产配置",
+        "資產配置", "回报", "回報", "CAPM", "NAV", "derivative", "fund", "unit-linked",
+    ],
+    "P6": [
+        "旅游", "旅遊", "旅程", "行李", "行程取消", "旅程延误", "旅程延誤",
+        "海外医疗", "海外醫療", "领事", "領事", "旅游保险", "旅遊保險", "旅保",
+        "随团", "隨團", "旅行社", "travel insurance",
+    ],
 }
 
 
@@ -140,18 +167,57 @@ def _paper_score(text: str, paper: str) -> int:
     return sum(1 for token in PAPER_HINTS.get(paper, []) if token.lower() in lower)
 
 
-def validate_paper(text: str, declared_paper: str) -> tuple[str, bool, str]:
+# 来源可信度：知识点生成与初始导入的科目由「分卷来源文件」天然确定，视为权威，
+# 仅当其它卷出现极强信号才提示；人工/资料上传则用常规门槛以发挥质检作用。
+AUTHORITATIVE_SOURCES = {"bootstrap", "ai_generated"}
+
+
+def validate_paper(
+    text: str,
+    declared_paper: str,
+    authoritative: bool = False,
+) -> tuple[str, bool, str]:
+    """判定题目所属卷别并提示是否与标注不符。
+
+    精准化要点：
+      - 关键词繁简双形匹配，避免简繁不一致造成的漏判/误判。
+      - 仅当「他卷得分显著领先标注卷」时才提示不符（领先幅度门槛 + 最低绝对分门槛）。
+      - 权威来源（生成/导入）抬高门槛，几乎只在极强反证下才提示。
+    """
     cleaned = (text or "").strip()
     if not cleaned:
         return declared_paper, False, "empty text"
 
+    if declared_paper not in PAPER_CHOICES:
+        scores = {paper: _paper_score(cleaned, paper) for paper in PAPER_CHOICES}
+        detected = max(scores, key=scores.get)
+        return detected, True, f"declared invalid; detected={detected}, scores={scores}"
+
     scores = {paper: _paper_score(cleaned, paper) for paper in PAPER_CHOICES}
-    detected = max(scores, key=scores.get)
-    tie = list(scores.values()).count(scores[detected]) > 1
-    if scores[detected] == 0 or tie:
-        detected = declared_paper if declared_paper in PAPER_CHOICES else detected
-    mismatch = detected != declared_paper
-    note = f"declared={declared_paper}, detected={detected}, scores={scores}"
+    declared_score = scores[declared_paper]
+    best = max(scores, key=scores.get)
+    best_score = scores[best]
+
+    # 领先幅度与最低绝对分门槛
+    margin = 4 if authoritative else 2
+    min_best = 4 if authoritative else 2
+
+    if (
+        best != declared_paper
+        and best_score >= min_best
+        and (best_score - declared_score) >= margin
+    ):
+        detected = best
+        mismatch = True
+    else:
+        detected = declared_paper
+        mismatch = False
+
+    note = (
+        f"declared={declared_paper}({declared_score}), "
+        f"best={best}({best_score}), authoritative={authoritative}, "
+        f"margin={margin}, scores={scores}"
+    )
     return detected, mismatch, note
 
 
@@ -164,7 +230,9 @@ def insert_question(raw: dict[str, Any], source_type: str, source_file: str = ""
 
     options = normalize_options(raw.get("options"))
     merged_text = stem + " " + " ".join(o["text"] for o in options)
-    detected_paper, mismatch, note = validate_paper(merged_text, declared_paper)
+    detected_paper, mismatch, note = validate_paper(
+        merged_text, declared_paper, authoritative=source_type in AUTHORITATIVE_SOURCES
+    )
 
     payload = (
         str(raw.get("question_id") or uuid.uuid4()),
@@ -531,8 +599,8 @@ def bootstrap_existing_bank() -> None:
         return
 
     candidates = [
-        Path(r"C:\Users\zhangwenkun12\iiqe_question_bank_enriched_10x.jsonl"),
-        Path(r"C:\Users\zhangwenkun12\iiqe_question_bank_enriched.jsonl"),
+        IIQE_BASE / "iiqe_question_bank_enriched_10x.jsonl",
+        IIQE_BASE / "iiqe_question_bank_enriched.jsonl",
     ]
     existing = [p for p in candidates if p.exists()]
     if not existing:
@@ -807,3 +875,33 @@ def sample_questions(n: int = 20, paper: str = "") -> list[dict[str, Any]]:
         q["issues"] = issues
         out.append(q)
     return out
+
+
+def revalidate_existing() -> dict[str, Any]:
+    """用最新的精准规则重算全部已入库题目的科目校验结果，更新不符标记。"""
+    conn = get_conn()
+    rows = conn.execute(
+        "SELECT id, stem, options_json, declared_paper, source_type FROM questions"
+    ).fetchall()
+
+    updated, flagged, cleared = 0, 0, 0
+    for r in rows:
+        try:
+            opts = json.loads(r["options_json"] or "[]")
+        except Exception:
+            opts = []
+        merged = (r["stem"] or "") + " " + " ".join(o.get("text", "") for o in opts)
+        authoritative = (r["source_type"] or "") in AUTHORITATIVE_SOURCES
+        detected, mismatch, note = validate_paper(
+            merged, r["declared_paper"], authoritative=authoritative
+        )
+        new_flag = 1 if mismatch else 0
+        conn.execute(
+            "UPDATE questions SET detected_paper=?, mismatch_flag=?, validation_note=? WHERE id=?",
+            (detected, new_flag, note, r["id"]),
+        )
+        updated += 1
+        flagged += new_flag
+    conn.commit()
+    conn.close()
+    return {"updated": updated, "flagged": flagged}

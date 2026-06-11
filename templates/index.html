@@ -8,6 +8,9 @@
   <article class="card">
     <h3>科目不匹配数</h3>
     <p class="metric danger">{{ stats.mismatch_count }}</p>
+    <form method="post" action="{{ url_for('revalidate_web') }}">
+      <button type="submit">用最新规则重算校验</button>
+    </form>
   </article>
   <article class="card">
     <h3>初始导入状态</h3>
@@ -20,7 +23,7 @@
   <h2>各科目题量</h2>
   <div class="paper-pills">
     {% for p in papers %}
-      <span class="pill">{{ p }} · {{ stats.paper_counts.get(p, 0) }}</span>
+      <span class="pill">{{ paper_names[p] }} · {{ stats.paper_counts.get(p, 0) }}</span>
     {% endfor %}
   </div>
 </section>
@@ -33,7 +36,7 @@
       <select name="paper_hint" required>
         <option value="">请选择科目</option>
         {% for p in papers %}
-          <option value="{{ p }}">{{ p }} - {{ paper_names[p] }}</option>
+          <option value="{{ p }}">{{ paper_names[p] }}（{{ p }}）</option>
         {% endfor %}
       </select>
       <label>文件</label>
@@ -49,7 +52,7 @@
       <select name="declared_paper">
         <option value="">使用文件内的科目值</option>
         {% for p in papers %}
-          <option value="{{ p }}">{{ p }} - {{ paper_names[p] }}</option>
+          <option value="{{ p }}">{{ paper_names[p] }}（{{ p }}）</option>
         {% endfor %}
       </select>
       <label>文件（.jsonl/.json/.csv）</label>
@@ -79,7 +82,7 @@
     <select name="sample_paper">
       <option value="">全部科目</option>
       {% for p in papers %}
-        <option value="{{ p }}" {% if p == sample_paper %}selected{% endif %}>{{ p }} - {{ paper_names[p] }}</option>
+        <option value="{{ p }}" {% if p == sample_paper %}selected{% endif %}>{{ paper_names[p] }}（{{ p }}）</option>
       {% endfor %}
     </select>
     <button type="submit">随机抽样</button>
@@ -90,7 +93,7 @@
     {% for q in samples %}
     <div class="sample-item {{ 'bad' if q.issues else '' }}">
       <p class="sample-head">
-        <span class="pill">{{ q.declared_paper }} · {{ paper_names.get(q.declared_paper, '') }}</span>
+        <span class="pill">{{ paper_names.get(q.declared_paper, q.declared_paper) }}（{{ q.declared_paper }}）</span>
         <span class="muted">{{ q.external_id }}</span>
         {% if q.issues %}<span class="metric danger">⚠ {{ q.issues | join('；') }}</span>{% endif %}
       </p>
@@ -117,7 +120,7 @@
     <select name="paper">
       <option value="">全部科目</option>
       {% for p in papers %}
-        <option value="{{ p }}" {% if p == selected_paper %}selected{% endif %}>{{ p }}</option>
+        <option value="{{ p }}" {% if p == selected_paper %}selected{% endif %}>{{ paper_names[p] }}（{{ p }}）</option>
       {% endfor %}
     </select>
     <select name="mismatch">
@@ -145,8 +148,8 @@
         {% for q in questions %}
         <tr class="{{ 'bad' if q.mismatch_flag else '' }}">
           <td>{{ q.id }}</td>
-          <td>{{ q.declared_paper }}</td>
-          <td>{{ q.detected_paper }}</td>
+          <td>{{ paper_names.get(q.declared_paper, q.declared_paper) }}</td>
+          <td>{{ paper_names.get(q.detected_paper, q.detected_paper) }}</td>
           <td>{{ "是" if q.mismatch_flag else "否" }}</td>
           <td>
             <details>
@@ -192,7 +195,7 @@
           <td>{{ row.created_at }}</td>
           <td>{{ type_labels.get(row.upload_type, row.upload_type) }}</td>
           <td>{{ row.filename }}</td>
-          <td>{{ row.declared_paper }}</td>
+          <td>{{ paper_names.get(row.declared_paper, row.declared_paper) }}</td>
           <td>{{ row.inserted_count }}</td>
           <td>{{ row.mismatch_count }}</td>
           <td>{{ mode_labels.get(row.generation_mode, row.generation_mode) }}</td>

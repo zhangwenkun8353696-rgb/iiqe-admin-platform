@@ -14,6 +14,7 @@ from services import (
     process_material_upload,
     process_questions_upload,
     query_questions,
+    revalidate_existing,
     sample_questions,
 )
 
@@ -108,9 +109,25 @@ def create_app() -> Flask:
             flash(str(exc), "error")
         return redirect(url_for("index"))
 
+    @app.post("/revalidate")
+    def revalidate_web():
+        try:
+            result = revalidate_existing()
+            flash(
+                f"已用最新规则重算 {result['updated']} 道题，当前疑似科目不符 {result['flagged']} 道。",
+                "success",
+            )
+        except Exception as exc:
+            flash(str(exc), "error")
+        return redirect(url_for("index"))
+
     @app.get("/api/stats")
     def api_stats():
         return jsonify(get_stats())
+
+    @app.post("/api/revalidate")
+    def api_revalidate():
+        return jsonify(revalidate_existing()), 200
 
     @app.get("/api/sample")
     def api_sample():
